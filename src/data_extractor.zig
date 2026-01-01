@@ -84,7 +84,7 @@ pub fn extract(req: *httpz.Request, res: *httpz.Response, start: i64, config: Ex
     if (config.log_client) {
         var addr_w: std.Io.Writer = .fixed(&data.address_buf);
         req.address.in.format(&addr_w) catch {};
-        data.address_len = addr_w.written;
+        data.address_len = addr_w.pos;
     }
 
     return data;
