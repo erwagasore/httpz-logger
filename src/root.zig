@@ -23,7 +23,7 @@ pub const Config = struct {
 
 config: Config,
 
-pub fn init(config: Config) @This() {
+pub fn init(config: Config) !@This() {
     return .{ .config = config };
 }
 
