@@ -77,7 +77,8 @@ pub fn extract(req: *httpz.Request, res: *httpz.Response, start: i64, config: Ex
     };
 
     // Format timestamp as ISO 8601
-    _ = Timestamp.now().iso8601(&data.timestamp_buf);
+    var ts = Timestamp.now();
+    _ = ts.iso8601(&data.timestamp_buf);
 
     // Format client address
     if (config.log_client) {
