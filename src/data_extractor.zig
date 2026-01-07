@@ -158,7 +158,7 @@ pub const TimestampCache = struct {
 /// Extracts log data with cached timestamp for performance.
 pub fn extractWithCache(req: *httpz.Request, res: *httpz.Response, start: i64, config: ExtractConfig, cache: *TimestampCache) LogData {
     var data = extract(req, res, start, config);
-    
+
     // Use cached timestamp if within the same second
     const current_second = @divTrunc(std.time.timestamp(), 1);
     if (current_second == cache.last_second) {
@@ -169,6 +169,6 @@ pub fn extractWithCache(req: *httpz.Request, res: *httpz.Response, start: i64, c
         @memcpy(&cache.cached_timestamp, &data.timestamp_buf);
         cache.last_second = current_second;
     }
-    
+
     return data;
 }

@@ -33,9 +33,9 @@ pub fn formatWriter(data: data_extractor.LogData, level: std.log.Level, writer: 
     var buf: [4096]u8 = undefined;
     var stream = std.io.fixedBufferStream(&buf);
     var io_writer: std.Io.Writer = .fixed(&buf);
-    
+
     try format(data, level, &io_writer);
-    
+
     const output = stream.getWritten();
     try writer.writeAll(output);
 }
