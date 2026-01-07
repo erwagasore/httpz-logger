@@ -1,4 +1,5 @@
 const std = @import("std");
+const constants = @import("constants.zig");
 
 const Self = @This();
 
@@ -7,7 +8,7 @@ const SECS_PER_MIN: i64 = 60;
 /// Seconds per hour
 const SECS_PER_HOUR: i64 = 60 * SECS_PER_MIN;
 /// Seconds per day
-const SECS_PER_DAY: i64 = 24 * SECS_PER_HOUR;
+const SECS_PER_DAY: i64 = constants.Time.SECONDS_PER_DAY;
 
 /// Days in each month (non-leap year)
 const DAYS_IN_MONTH = [_]u8{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
@@ -82,18 +83,40 @@ pub fn daysSinceEpoch(self: *const Self) i64 {
 fn ensureCached(self: *Self) void {
     if (self.cached) return;
 
-    var y: u16 = 1970;
     var remaining = self.daysSinceEpoch();
 
+    // Handle dates before Unix epoch (1970)
+    if (remaining < 0) {
+        // Clamp to minimum valid date
+        self.cached_year = constants.Time.EPOCH_YEAR;
+        self.cached_day_of_year = 1;
+        self.cached = true;
+        return;
+    }
+
+    // Handle dates after reasonable maximum (year 9999)
+    if (remaining > constants.Time.DAYS_PER_YEAR * constants.Time.MAX_YEARS_FROM_EPOCH) {
+        self.cached_year = constants.Time.MAX_YEAR;
+        self.cached_day_of_year = constants.Time.DAYS_PER_YEAR;
+        self.cached = true;
+        return;
+    }
+
+    var y: u16 = constants.Time.EPOCH_YEAR;
     while (true) {
-        const days_in_year: i64 = if (isLeapYear(y)) 366 else 365;
+        const days_in_year: i64 = if (isLeapYear(y)) constants.Time.DAYS_PER_LEAP_YEAR else constants.Time.DAYS_PER_YEAR;
         if (remaining < days_in_year) break;
         remaining -= days_in_year;
         y += 1;
+        if (y > constants.Time.MAX_YEAR) {
+            // Prevent overflow
+            y = constants.Time.MAX_YEAR;
+            break;
+        }
     }
 
     self.cached_year = y;
-    self.cached_day_of_year = @intCast(remaining + 1);
+    self.cached_day_of_year = @intCast(@max(1, @min(366, remaining + 1)));
     self.cached = true;
 }
 
@@ -111,14 +134,14 @@ fn monthAndDay(y: u16, day_of_year: u16) struct { month: u8, day: u8 } {
 }
 
 fn isLeapYear(y: u16) bool {
-    return (@mod(y, 4) == 0 and @mod(y, 100) != 0) or (@mod(y, 400) == 0);
+    return (@mod(y, constants.LeapYear.DIVISOR_4) == 0 and @mod(y, constants.LeapYear.DIVISOR_100) != 0) or (@mod(y, constants.LeapYear.DIVISOR_400) == 0);
 }
 
 const testing = std.testing;
 
 test "unix epoch" {
     var ts = init(0);
-    try testing.expectEqual(@as(u16, 1970), ts.year());
+    try testing.expectEqual(@as(u16, constants.Time.EPOCH_YEAR), ts.year());
     try testing.expectEqual(@as(u8, 1), ts.month());
     try testing.expectEqual(@as(u8, 1), ts.dayOfMonth());
     try testing.expectEqual(@as(u8, 0), ts.hour());
