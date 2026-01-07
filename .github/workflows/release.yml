@@ -1,4 +1,4 @@
-name: Release Please
+name: Release
 
 on:
   push:
@@ -6,111 +6,37 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
-  release-please:
+  release:
     runs-on: ubuntu-latest
     steps:
-      - uses: google-github-actions/release-please-action@v4
-        id: release
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          release-type: simple
-          package-name: httpz-logger
-
-          # Version bumping rules
-          bump-minor-pre-major: true # Before 1.0.0, bump minor for breaking changes
-          bump-patch-for-minor-pre-major: true # Before 1.0.0, bump patch for features
-
-          # Files to update version in
-          extra-files: |
-            build.zig.zon
-
-          # Changelog configuration
-          changelog-types: |
-            [
-              {"type": "feat", "section": "✨ Features", "hidden": false},
-              {"type": "fix", "section": "🐛 Bug Fixes", "hidden": false},
-              {"type": "perf", "section": "⚡ Performance Improvements", "hidden": false},
-              {"type": "deps", "section": "📦 Dependencies", "hidden": false},
-              {"type": "docs", "section": "📚 Documentation", "hidden": false},
-              {"type": "test", "section": "🧪 Tests", "hidden": true},
-              {"type": "refactor", "section": "♻️ Code Refactoring", "hidden": true},
-              {"type": "style", "section": "💄 Styling", "hidden": true},
-              {"type": "ci", "section": "🔧 CI/CD", "hidden": true},
-              {"type": "chore", "section": "🔧 Miscellaneous", "hidden": true},
-              {"type": "revert", "section": "⏪ Reverts", "hidden": false}
-            ]
-
-      # Only run these steps if a release was created
       - uses: actions/checkout@v4
-        if: ${{ steps.release.outputs.release_created }}
-
-      - uses: mlugg/setup-zig@v2
-        if: ${{ steps.release.outputs.release_created }}
         with:
-          version: 0.15.2
+          fetch-depth: 0
 
-      - name: Cache Zig dependencies
-        if: ${{ steps.release.outputs.release_created }}
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/zig
-            .zig-cache
-          key: ${{ runner.os }}-zig-${{ hashFiles('build.zig.zon') }}
-          restore-keys: |
-            ${{ runner.os }}-zig-
-
-      - name: Run tests before release
-        if: ${{ steps.release.outputs.release_created }}
-        run: zig build test
-
-      - name: Build release artifacts
-        if: ${{ steps.release.outputs.release_created }}
-        run: zig build -Doptimize=ReleaseFast
-
-      - name: Update release notes with installation instructions
-        if: ${{ steps.release.outputs.release_created }}
+      - name: Bump version and push tag
+        id: tag
+        uses: anothrNick/github-tag-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BUMP: none
+          WITH_V: true
+
+      - name: Update build.zig.zon
+        if: steps.tag.outputs.new_tag != steps.tag.outputs.tag
         run: |
-          # Get the current release body
-          gh release view ${{ steps.release.outputs.tag_name }} --json body -q .body > current_notes.md
+          version="${{ steps.tag.outputs.new_tag }}"
+          sed -i "s/\.version = \"[^\"]*\"/.version = \"${version#v}\"/" build.zig.zon
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add build.zig.zon
+          git commit -m "chore: bump version to $version" || true
+          git push
 
-          # Append installation instructions
-          cat >> current_notes.md << 'EOF'
-
-          ## 📦 Installation
-
-          Add to your `build.zig.zon`:
-          ```zig
-          .dependencies = .{
-              .httpz_logger = .{
-                  .url = "https://github.com/${{ github.repository }}/archive/${{ steps.release.outputs.tag_name }}.tar.gz",
-              },
-          }
-          ```
-
-          Then run:
-          ```bash
-          zig fetch --save https://github.com/${{ github.repository }}/archive/${{ steps.release.outputs.tag_name }}.tar.gz
-          ```
-
-          ## 📖 Usage
-
-          ```zig
-          const httpz = @import("httpz");
-          const HttpLogger = @import("httpz_logger");
-
-          var server = try httpz.Server().init(allocator, .{});
-          try server.middleware(HttpLogger, .{
-              .format = .json,
-              .min_status = 400,  // Only log errors
-          });
-          ```
-          EOF
-
-          # Update the release
-          gh release edit ${{ steps.release.outputs.tag_name }} --notes-file current_notes.md
+      - name: Create release
+        if: steps.tag.outputs.new_tag != steps.tag.outputs.tag
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.new_tag }}
+          generate_release_notes: true
