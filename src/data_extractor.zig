@@ -148,3 +148,27 @@ test "parseTraceparent: valid with extra data after flags" {
     try testing.expectEqualStrings("0af7651916cd43dd8448eb211c80319c", result.?.trace_id);
     try testing.expectEqualStrings("b7ad6b7169203331", result.?.span_id);
 }
+
+/// Cache for timestamp formatting to avoid repeated calculations
+pub const TimestampCache = struct {
+    last_second: i64 = -1,
+    cached_timestamp: [20]u8 = undefined,
+};
+
+/// Extracts log data with cached timestamp for performance.
+pub fn extractWithCache(req: *httpz.Request, res: *httpz.Response, start: i64, config: ExtractConfig, cache: *TimestampCache) LogData {
+    var data = extract(req, res, start, config);
+
+    // Use cached timestamp if within the same second
+    const current_second = @divTrunc(std.time.timestamp(), 1);
+    if (current_second == cache.last_second) {
+        @memcpy(&data.timestamp_buf, &cache.cached_timestamp);
+    } else {
+        var ts = @import("timestamp.zig").init(std.time.timestamp());
+        _ = ts.iso8601(&data.timestamp_buf);
+        @memcpy(&cache.cached_timestamp, &data.timestamp_buf);
+        cache.last_second = current_second;
+    }
+
+    return data;
+}

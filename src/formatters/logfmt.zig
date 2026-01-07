@@ -13,14 +13,14 @@ pub fn format(data: data_extractor.LogData, level: std.log.Level, writer: *std.I
         data.size,
     });
 
-    try writeField(writer, "path", data.path);
-    if (data.client().len > 0) try writeField(writer, "client", data.client());
+    try writeFieldGeneric(writer, "path", data.path);
+    if (data.client().len > 0) try writeFieldGeneric(writer, "client", data.client());
     if (data.trace_id) |v| try writer.print(" trace_id={s}", .{v});
     if (data.span_id) |v| try writer.print(" span_id={s}", .{v});
-    if (data.query) |v| try writeField(writer, "query", v);
-    if (data.user_agent) |v| try writeField(writer, "user_agent", v);
-    if (data.user_id) |v| try writeField(writer, "user_id", v);
-    if (data.request_id) |v| try writeField(writer, "request_id", v);
+    if (data.query) |v| try writeFieldGeneric(writer, "query", v);
+    if (data.user_agent) |v| try writeFieldGeneric(writer, "user_agent", v);
+    if (data.user_id) |v| try writeFieldGeneric(writer, "user_id", v);
+    if (data.request_id) |v| try writeFieldGeneric(writer, "request_id", v);
 }
 
 /// Writes a key=value pair, quoting the value if it contains special characters.
@@ -131,4 +131,50 @@ test "writeEscaped normal string" {
     var w: std.Io.Writer = .fixed(&buf);
     try writeEscaped(&w, "normal");
     try testing.expectEqualStrings("normal", w.buffered());
+}
+
+/// Formats log data as logfmt using standard writer interface.
+pub fn formatWriter(data: data_extractor.LogData, level: std.log.Level, writer: anytype) !void {
+    try writer.print("timestamp={s} level={s} method={s} status={d} duration_ms={d} size={d}", .{
+        data.timestamp(),
+        @tagName(level),
+        @tagName(data.method),
+        data.status,
+        data.duration_ms,
+        data.size,
+    });
+
+    try writeFieldGeneric(writer, "path", data.path);
+    const client = data.client();
+    if (client.len > 0) try writeFieldGeneric(writer, "client", client);
+    if (data.trace_id) |v| try writer.print(" trace_id={s}", .{v});
+    if (data.span_id) |v| try writer.print(" span_id={s}", .{v});
+    if (data.query) |v| try writeFieldGeneric(writer, "query", v);
+    if (data.user_agent) |v| try writeFieldGeneric(writer, "user_agent", v);
+    if (data.user_id) |v| try writeFieldGeneric(writer, "user_id", v);
+    if (data.request_id) |v| try writeFieldGeneric(writer, "request_id", v);
+}
+
+/// Writes a key=value pair for generic writer, quoting the value if it contains special characters.
+fn writeFieldGeneric(writer: anytype, key: []const u8, value: []const u8) !void {
+    if (needsQuoting(value)) {
+        try writer.print(" {s}=\"", .{key});
+        try writeEscapedGeneric(writer, value);
+        try writer.writeByte('"');
+    } else {
+        try writer.print(" {s}={s}", .{ key, value });
+    }
+}
+
+/// Writes escaped string to generic writer, escaping special characters.
+fn writeEscapedGeneric(writer: anytype, value: []const u8) !void {
+    for (value) |c| {
+        switch (c) {
+            '"' => try writer.writeAll("\\\""),
+            '\\' => try writer.writeAll("\\\\"),
+            '\n' => try writer.writeAll("\\n"),
+            '\r' => try writer.writeAll("\\r"),
+            else => try writer.writeByte(c),
+        }
+    }
 }
