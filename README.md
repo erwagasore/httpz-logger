@@ -6,6 +6,16 @@ Built on [logz](https://github.com/karlseguin/log.zig) for high-performance stru
 
 ## Quickstart
 
+```bash
+git clone git@github.com:erwagasore/httpz-logger.git
+cd httpz-logger
+zig build              # build library + example
+zig build test         # run unit tests
+zig build run          # run example server on :8080
+```
+
+### As a dependency
+
 Add to `build.zig.zon`:
 
 ```zig

@@ -30,9 +30,13 @@ Use [Conventional Commits](https://www.conventionalcommits.org/).
 
 | Path | Description |
 |------|-------------|
+| `src/root.zig` | Middleware implementation — config, execute, log, traceparent parser |
+| `examples/basic_server.zig` | Runnable example server with logging middleware |
+| `build.zig` | Build system — library module, example executable, test step |
+| `build.zig.zon` | Package manifest with httpz and logz dependencies |
+| `MIGRATION_PLAN.md` | v2 rewrite plan — architecture decisions and v1 comparison |
+| `CHANGELOG.md` | Release history |
 | `LICENSE` | MIT licence |
-| `.gitignore` | Zig build artefact exclusions (`.zig-cache/`, `zig-out/`) |
-| `MIGRATION_PLAN.md` | v2 rewrite plan — architecture, implementation details, and checklist |
 
 ## Merge strategy
 
@@ -48,6 +52,6 @@ Use [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## Orientation
 
-- **Entry point**: `MIGRATION_PLAN.md` — the repo is pre-implementation; the plan is the primary reference.
+- **Entry point**: `src/root.zig` — single-file middleware implementation.
 - **Domain**: HTTP request logging middleware for the Zig [httpz](https://github.com/karlseguin/http.zig) framework, backed by [logz](https://github.com/karlseguin/log.zig).
 - **Stack**: Zig 0.15+, httpz, logz.
