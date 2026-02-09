@@ -131,41 +131,362 @@ pub fn parseTraceparent(header: []const u8) ?struct { trace_id: []const u8, span
 
 const testing = std.testing;
 
-test "levelFromStatus returns correct levels" {
-    // 5xx → Error
-    try testing.expectEqual(.Error, levelFromStatus(500));
-    try testing.expectEqual(.Error, levelFromStatus(503));
-    try testing.expectEqual(.Error, levelFromStatus(599));
+// -- levelFromStatus ---------------------------------------------------------
 
-    // 4xx → Warn
-    try testing.expectEqual(.Warn, levelFromStatus(400));
-    try testing.expectEqual(.Warn, levelFromStatus(404));
-    try testing.expectEqual(.Warn, levelFromStatus(499));
-
-    // 2xx, 3xx → Info
+test "levelFromStatus: 1xx and 2xx map to Info" {
+    try testing.expectEqual(.Info, levelFromStatus(100));
     try testing.expectEqual(.Info, levelFromStatus(200));
     try testing.expectEqual(.Info, levelFromStatus(201));
-    try testing.expectEqual(.Info, levelFromStatus(301));
-    try testing.expectEqual(.Info, levelFromStatus(304));
+    try testing.expectEqual(.Info, levelFromStatus(204));
+    try testing.expectEqual(.Info, levelFromStatus(299));
 }
 
-test "parseTraceparent with valid header" {
-    const header = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
-    const result = parseTraceparent(header).?;
+test "levelFromStatus: 3xx maps to Info" {
+    try testing.expectEqual(.Info, levelFromStatus(301));
+    try testing.expectEqual(.Info, levelFromStatus(304));
+    try testing.expectEqual(.Info, levelFromStatus(399));
+}
+
+test "levelFromStatus: 4xx maps to Warn" {
+    try testing.expectEqual(.Warn, levelFromStatus(400));
+    try testing.expectEqual(.Warn, levelFromStatus(401));
+    try testing.expectEqual(.Warn, levelFromStatus(403));
+    try testing.expectEqual(.Warn, levelFromStatus(404));
+    try testing.expectEqual(.Warn, levelFromStatus(422));
+    try testing.expectEqual(.Warn, levelFromStatus(429));
+    try testing.expectEqual(.Warn, levelFromStatus(499));
+}
+
+test "levelFromStatus: 5xx maps to Error" {
+    try testing.expectEqual(.Error, levelFromStatus(500));
+    try testing.expectEqual(.Error, levelFromStatus(502));
+    try testing.expectEqual(.Error, levelFromStatus(503));
+    try testing.expectEqual(.Error, levelFromStatus(504));
+    try testing.expectEqual(.Error, levelFromStatus(599));
+}
+
+// -- parseTraceparent --------------------------------------------------------
+
+test "parseTraceparent: valid header" {
+    const tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    const result = parseTraceparent(tp).?;
     try testing.expectEqualStrings("0af7651916cd43dd8448eb211c80319c", result.trace_id);
     try testing.expectEqualStrings("b7ad6b7169203331", result.span_id);
 }
 
-test "parseTraceparent rejects short input" {
-    try testing.expect(parseTraceparent("") == null);
-    try testing.expect(parseTraceparent("00-abc-def-01") == null);
+test "parseTraceparent: all-zero ids are valid" {
+    const tp = "00-00000000000000000000000000000000-0000000000000000-00";
+    const result = parseTraceparent(tp).?;
+    try testing.expectEqualStrings("00000000000000000000000000000000", result.trace_id);
+    try testing.expectEqualStrings("0000000000000000", result.span_id);
 }
 
-test "parseTraceparent rejects wrong version" {
+test "parseTraceparent: sampled flag 00 is valid" {
+    const result = parseTraceparent("00-aaf7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00");
+    try testing.expect(result != null);
+}
+
+test "parseTraceparent: extra trailing data is accepted" {
+    // W3C spec allows future extensions after the flags field.
+    const tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01-extra-stuff";
+    const result = parseTraceparent(tp).?;
+    try testing.expectEqualStrings("0af7651916cd43dd8448eb211c80319c", result.trace_id);
+    try testing.expectEqualStrings("b7ad6b7169203331", result.span_id);
+}
+
+test "parseTraceparent: rejects empty string" {
+    try testing.expect(parseTraceparent("") == null);
+}
+
+test "parseTraceparent: rejects too-short input" {
+    try testing.expect(parseTraceparent("00-abc-def-01") == null);
+    try testing.expect(parseTraceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b716920333") == null); // 54 chars
+}
+
+test "parseTraceparent: rejects wrong version" {
     try testing.expect(parseTraceparent("01-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01") == null);
     try testing.expect(parseTraceparent("ff-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01") == null);
 }
 
-test "parseTraceparent rejects wrong delimiters" {
+test "parseTraceparent: rejects wrong delimiters" {
     try testing.expect(parseTraceparent("00_0af7651916cd43dd8448eb211c80319c_b7ad6b7169203331_01") == null);
+    try testing.expect(parseTraceparent("00-0af7651916cd43dd8448eb211c80319c_b7ad6b7169203331-01") == null);
+    try testing.expect(parseTraceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331_01") == null);
+}
+
+// -- Middleware integration --------------------------------------------------
+
+const log_path = "/tmp/httpz-logger-test.log";
+
+/// Set up logz with file output for integration tests.
+fn setupLogz() void {
+    logz.setup(testing.allocator, .{
+        .level = .Debug,
+        .output = .{ .file = log_path },
+        .pool_size = 2,
+    }) catch unreachable;
+}
+
+/// Read the log file contents. Caller owns the returned slice.
+fn readLog() ![]u8 {
+    return std.fs.cwd().readFileAlloc(testing.allocator, log_path, 8192);
+}
+
+/// Delete the log file (ignore if missing).
+fn cleanLog() void {
+    std.fs.cwd().deleteFile(log_path) catch {};
+}
+
+fn initHt() httpz.testing.Testing {
+    return httpz.testing.init(.{});
+}
+
+const NoopExecutor = struct {
+    pub fn next(_: *NoopExecutor) !void {}
+};
+
+test "middleware: logs basic GET request" {
+    cleanLog();
+    setupLogz();
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/hello");
+    ht.res.status = 200;
+    ht.res.body = "OK";
+
+    const mw = @This(){ .config = .{} };
+    var exec = NoopExecutor{};
+    try mw.execute(ht.req, ht.res, &exec);
+
+    const output = try readLog();
+    defer testing.allocator.free(output);
+
+    try testing.expect(std.mem.indexOf(u8, output, "method=GET") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "path=/hello") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "status=200") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "size=2") != null);
+}
+
+test "middleware: level filter skips 200 when config is .Error" {
+    cleanLog();
+    setupLogz();
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/ok");
+    ht.res.status = 200;
+
+    const mw = @This(){ .config = .{ .level = .Error } };
+    var exec = NoopExecutor{};
+    try mw.execute(ht.req, ht.res, &exec);
+
+    const output = readLog() catch "";
+    defer if (output.len > 0) testing.allocator.free(output);
+    try testing.expectEqual(@as(usize, 0), output.len);
+}
+
+test "middleware: level filter logs 500 when config is .Error" {
+    cleanLog();
+    setupLogz();
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/fail");
+    ht.res.status = 500;
+    ht.res.body = "Internal Server Error";
+
+    const mw = @This(){ .config = .{ .level = .Error } };
+    var exec = NoopExecutor{};
+    try mw.execute(ht.req, ht.res, &exec);
+
+    const output = try readLog();
+    defer testing.allocator.free(output);
+
+    try testing.expect(std.mem.indexOf(u8, output, "status=500") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "path=/fail") != null);
+}
+
+test "middleware: level filter logs 404 when config is .Warn" {
+    cleanLog();
+    setupLogz();
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/missing");
+    ht.res.status = 404;
+    ht.res.body = "Not Found";
+
+    const mw = @This(){ .config = .{ .level = .Warn } };
+    var exec = NoopExecutor{};
+    try mw.execute(ht.req, ht.res, &exec);
+
+    const output = try readLog();
+    defer testing.allocator.free(output);
+
+    try testing.expect(std.mem.indexOf(u8, output, "status=404") != null);
+}
+
+test "middleware: traceparent header is extracted" {
+    cleanLog();
+    setupLogz();
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/traced");
+    ht.header("traceparent", "00-aaf7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
+    ht.res.status = 200;
+
+    const mw = @This(){ .config = .{} };
+    var exec = NoopExecutor{};
+    try mw.execute(ht.req, ht.res, &exec);
+
+    const output = try readLog();
+    defer testing.allocator.free(output);
+
+    try testing.expect(std.mem.indexOf(u8, output, "trace_id=aaf7651916cd43dd8448eb211c80319c") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "span_id=b7ad6b7169203331") != null);
+}
+
+test "middleware: traceparent disabled in config" {
+    cleanLog();
+    setupLogz();
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/no-trace");
+    ht.header("traceparent", "00-aaf7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
+    ht.res.status = 200;
+
+    const mw = @This(){ .config = .{ .log_trace_id = false, .log_span_id = false } };
+    var exec = NoopExecutor{};
+    try mw.execute(ht.req, ht.res, &exec);
+
+    const output = try readLog();
+    defer testing.allocator.free(output);
+
+    try testing.expect(std.mem.indexOf(u8, output, "trace_id=") == null);
+    try testing.expect(std.mem.indexOf(u8, output, "span_id=") == null);
+}
+
+test "middleware: user-agent logged when enabled" {
+    cleanLog();
+    setupLogz();
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/ua");
+    ht.header("user-agent", "TestBot/1.0");
+    ht.res.status = 200;
+
+    const mw = @This(){ .config = .{} };
+    var exec = NoopExecutor{};
+    try mw.execute(ht.req, ht.res, &exec);
+
+    const output = try readLog();
+    defer testing.allocator.free(output);
+
+    try testing.expect(std.mem.indexOf(u8, output, "user_agent=TestBot/1.0") != null);
+}
+
+test "middleware: user-agent omitted when disabled" {
+    cleanLog();
+    setupLogz();
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/no-ua");
+    ht.header("user-agent", "TestBot/1.0");
+    ht.res.status = 200;
+
+    const mw = @This(){ .config = .{ .log_user_agent = false } };
+    var exec = NoopExecutor{};
+    try mw.execute(ht.req, ht.res, &exec);
+
+    const output = try readLog();
+    defer testing.allocator.free(output);
+
+    try testing.expect(std.mem.indexOf(u8, output, "user_agent=") == null);
+}
+
+test "middleware: query string logged" {
+    cleanLog();
+    setupLogz();
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/search?q=zig&page=1");
+    ht.res.status = 200;
+
+    const mw = @This(){ .config = .{} };
+    var exec = NoopExecutor{};
+    try mw.execute(ht.req, ht.res, &exec);
+
+    const output = try readLog();
+    defer testing.allocator.free(output);
+
+    try testing.expect(std.mem.indexOf(u8, output, "path=/search") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "q=zig&page=1") != null);
+}
+
+test "middleware: x-request-id and x-user-id headers" {
+    cleanLog();
+    setupLogz();
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/api");
+    ht.header("x-request-id", "req-abc-123");
+    ht.header("x-user-id", "user-42");
+    ht.res.status = 200;
+
+    const mw = @This(){ .config = .{} };
+    var exec = NoopExecutor{};
+    try mw.execute(ht.req, ht.res, &exec);
+
+    const output = try readLog();
+    defer testing.allocator.free(output);
+
+    try testing.expect(std.mem.indexOf(u8, output, "request_id=req-abc-123") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "user_id=user-42") != null);
+}
+
+test "middleware: .None level disables all logging" {
+    cleanLog();
+    setupLogz();
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/silent");
+    ht.res.status = 500;
+
+    const mw = @This(){ .config = .{ .level = .None } };
+    var exec = NoopExecutor{};
+    try mw.execute(ht.req, ht.res, &exec);
+
+    const output = readLog() catch "";
+    defer if (output.len > 0) testing.allocator.free(output);
+    try testing.expectEqual(@as(usize, 0), output.len);
 }
