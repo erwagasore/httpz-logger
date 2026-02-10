@@ -65,8 +65,16 @@ pub fn main() !void {
 
 ## Output
 
+Encoding is controlled by logz — the middleware is format-agnostic.
+
+**logfmt** (default):
 ```
 @ts=1735689600000 @l=INFO method=GET path=/api/users status=200 size=45 duration_ms=12 trace_id=0af7651916cd43dd8448eb211c80319c span_id=b7ad6b7169203331
+```
+
+**JSON** (`logz.setup(allocator, .{ .encoding = .json })`):
+```json
+{"@ts":1735689600000,"@l":"INFO","method":"GET","path":"/api/users","status":200,"size":45,"duration_ms":12,"trace_id":"0af7651916cd43dd8448eb211c80319c","span_id":"b7ad6b7169203331"}
 ```
 
 ## Configuration

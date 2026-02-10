@@ -218,11 +218,17 @@ test "parseTraceparent: rejects wrong delimiters" {
 
 const log_path = "/tmp/httpz-logger-test.log";
 
-/// Set up logz with file output for integration tests.
+/// Set up logz with logfmt file output for integration tests.
 fn setupLogz() void {
+    setupLogzWith(.logfmt);
+}
+
+/// Set up logz with the given encoding and file output.
+fn setupLogzWith(encoding: logz.Config.Encoding) void {
     logz.setup(testing.allocator, .{
         .level = .Debug,
         .output = .{ .file = log_path },
+        .encoding = encoding,
         .pool_size = 2,
     }) catch unreachable;
 }
@@ -483,6 +489,77 @@ test "middleware: .None level disables all logging" {
     ht.res.status = 500;
 
     const mw = @This(){ .config = .{ .level = .None } };
+    var exec = NoopExecutor{};
+    try mw.execute(ht.req, ht.res, &exec);
+
+    const output = readLog() catch "";
+    defer if (output.len > 0) testing.allocator.free(output);
+    try testing.expectEqual(@as(usize, 0), output.len);
+}
+
+// -- JSON encoding -----------------------------------------------------------
+
+test "middleware: json encoding logs basic request" {
+    cleanLog();
+    setupLogzWith(.json);
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/api/data");
+    ht.res.status = 200;
+    ht.res.body = "OK";
+
+    const mw = @This(){ .config = .{} };
+    var exec = NoopExecutor{};
+    try mw.execute(ht.req, ht.res, &exec);
+
+    const output = try readLog();
+    defer testing.allocator.free(output);
+
+    // JSON output wraps keys and string values in quotes.
+    try testing.expect(std.mem.indexOf(u8, output, "\"method\":\"GET\"") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "\"path\":\"/api/data\"") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "\"status\":200") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "\"size\":2") != null);
+}
+
+test "middleware: json encoding includes traceparent fields" {
+    cleanLog();
+    setupLogzWith(.json);
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/traced");
+    ht.header("traceparent", "00-aaf7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
+    ht.res.status = 200;
+
+    const mw = @This(){ .config = .{} };
+    var exec = NoopExecutor{};
+    try mw.execute(ht.req, ht.res, &exec);
+
+    const output = try readLog();
+    defer testing.allocator.free(output);
+
+    try testing.expect(std.mem.indexOf(u8, output, "\"trace_id\":\"aaf7651916cd43dd8448eb211c80319c\"") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "\"span_id\":\"b7ad6b7169203331\"") != null);
+}
+
+test "middleware: json encoding respects level filter" {
+    cleanLog();
+    setupLogzWith(.json);
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/ok");
+    ht.res.status = 200;
+
+    const mw = @This(){ .config = .{ .level = .Error } };
     var exec = NoopExecutor{};
     try mw.execute(ht.req, ht.res, &exec);
 
