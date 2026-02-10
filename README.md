@@ -37,36 +37,38 @@ exe.root_module.addImport("httpz_logger", httpz_logger.module("httpz_logger"));
 ```zig
 const std = @import("std");
 const httpz = @import("httpz");
-const logz = @import("logz");
 const HttpLogger = @import("httpz_logger");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
-    // Initialise logz first (required).
-    try logz.setup(allocator, .{ .level = .Info, .output = .stdout });
-    defer logz.deinit();
-
     var server = try httpz.Server(void).init(allocator, .{ .port = 8080 }, {});
     defer server.deinit();
     defer server.stop();
 
-    // Register the middleware.
+    // One line — logging is ready.
     const logger = try server.middleware(HttpLogger, .{});
 
-    var router = try server.router(.{});
-    router.middlewares = &.{logger};
+    var router = try server.router(.{ .middlewares = &.{logger} });
     router.get("/", handleIndex, .{});
 
     try server.listen();
 }
 ```
 
+No logz import, no logz setup — the middleware handles it.
+
 ## Output
 
+**logfmt** (default):
 ```
 @ts=1735689600000 @l=INFO method=GET path=/api/users status=200 size=45 duration_ms=12 trace_id=0af7651916cd43dd8448eb211c80319c span_id=b7ad6b7169203331
+```
+
+**JSON** (`.encoding = .json`):
+```json
+{"@ts":1735689600000,"@l":"INFO","method":"GET","path":"/api/users","status":200,"size":45,"duration_ms":12,"trace_id":"0af7651916cd43dd8448eb211c80319c","span_id":"b7ad6b7169203331"}
 ```
 
 ## Configuration
@@ -74,6 +76,8 @@ pub fn main() !void {
 ```zig
 const logger = try server.middleware(HttpLogger, .{
     .level = .Warn,           // Only log 4xx and 5xx
+    .output = .stderr,        // Write to stderr (default: .stdout)
+    .encoding = .json,        // JSON output (default: .logfmt)
     .log_query = true,        // Include query string
     .log_user_agent = false,  // Exclude User-Agent
     .log_client = true,       // Include client IP
@@ -81,6 +85,7 @@ const logger = try server.middleware(HttpLogger, .{
     .log_span_id = true,      // Include span_id from traceparent
     .log_request_id = true,   // Include X-Request-ID header
     .log_user_id = true,      // Include X-User-ID header
+    .pool_size = 64,          // Pre-allocated log buffers (default: 32)
 });
 ```
 
@@ -93,6 +98,14 @@ const logger = try server.middleware(HttpLogger, .{
 | `.Warn` | 4xx and 5xx only |
 | `.Error` | 5xx only |
 | `.None` | Nothing |
+
+### Output Destinations
+
+| Value | Description |
+|-------|-------------|
+| `.stdout` | Standard output (default) |
+| `.stderr` | Standard error |
+| `.{ .file = "/var/log/app.log" }` | Write to file |
 
 ## Distributed Tracing
 
