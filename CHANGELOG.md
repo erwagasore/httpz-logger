@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.0] — 2026-02-10
+
+### Breaking Changes
+
+- `init` now takes `(Config, httpz.MiddlewareConfig)` — logz is set up automatically; users no longer need to import or configure logz directly
+
+### Features
+
+- Middleware handles full logging backend lifecycle (setup and teardown)
+- Re-exported `Level`, `Output`, `Encoding` types for self-contained configuration
+- Config absorbs `output`, `encoding`, and `pool_size` settings
+
+### Other
+
+- 26 tests: expanded unit tests and added integration tests for both logfmt and JSON encodings
+
 ## [0.1.0] — 2026-02-09
 
 ### Features
