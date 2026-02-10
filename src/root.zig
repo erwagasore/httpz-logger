@@ -8,17 +8,20 @@
 //! ```zig
 //! const HttpLogger = @import("httpz_logger");
 //!
-//! // In main(), initialize logz first:
-//! try logz.setup(allocator, .{ .level = .Info, .output = .stdout });
-//! defer logz.deinit();
-//!
-//! // Then register the middleware:
-//! const logger = try server.middleware(HttpLogger, .{});
+//! const logger = try server.middleware(HttpLogger, .{
+//!     .level = .Info,
+//!     .output = .stdout,
+//! });
 //! ```
 
 const std = @import("std");
 const httpz = @import("httpz");
 const logz = @import("logz");
+
+// Re-export types the user needs for configuration.
+pub const Level = logz.Level;
+pub const Output = logz.Config.Output;
+pub const Encoding = logz.Config.Encoding;
 
 /// Configuration for the HTTP logger middleware.
 pub const Config = struct {
@@ -28,7 +31,16 @@ pub const Config = struct {
     /// - .Warn:  log 4xx and 5xx only
     /// - .Error: log 5xx only
     /// - .None:  disable logging
-    level: logz.Level = .Info,
+    level: Level = .Info,
+
+    /// Where to write log output.
+    output: Output = .stdout,
+
+    /// Log encoding format.
+    encoding: Encoding = .logfmt,
+
+    /// Number of pre-allocated log buffers.
+    pool_size: usize = 32,
 
     /// Include query string in logs.
     log_query: bool = true,
@@ -48,9 +60,20 @@ pub const Config = struct {
 
 config: Config,
 
-/// Initialise the middleware with the given configuration.
-pub fn init(config: Config) !@This() {
+/// Initialise the middleware — sets up the logging backend automatically.
+pub fn init(config: Config, mc: httpz.MiddlewareConfig) !@This() {
+    try logz.setup(mc.allocator, .{
+        .level = config.level,
+        .output = config.output,
+        .encoding = config.encoding,
+        .pool_size = config.pool_size,
+    });
     return .{ .config = config };
+}
+
+/// Tear down the logging backend.
+pub fn deinit(_: *@This()) void {
+    logz.deinit();
 }
 
 /// Middleware execution — called by httpz for each request.
@@ -107,7 +130,7 @@ fn log(self: *const @This(), req: *httpz.Request, res: *httpz.Response, duration
 }
 
 /// Maps HTTP status code to log level.
-fn levelFromStatus(status: u16) logz.Level {
+fn levelFromStatus(status: u16) Level {
     if (status >= 500) return .Error;
     if (status >= 400) return .Warn;
     return .Info;
@@ -187,7 +210,6 @@ test "parseTraceparent: sampled flag 00 is valid" {
 }
 
 test "parseTraceparent: extra trailing data is accepted" {
-    // W3C spec allows future extensions after the flags field.
     const tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01-extra-stuff";
     const result = parseTraceparent(tp).?;
     try testing.expectEqualStrings("0af7651916cd43dd8448eb211c80319c", result.trace_id);
@@ -200,7 +222,7 @@ test "parseTraceparent: rejects empty string" {
 
 test "parseTraceparent: rejects too-short input" {
     try testing.expect(parseTraceparent("00-abc-def-01") == null);
-    try testing.expect(parseTraceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b716920333") == null); // 54 chars
+    try testing.expect(parseTraceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b716920333") == null);
 }
 
 test "parseTraceparent: rejects wrong version" {
@@ -218,13 +240,12 @@ test "parseTraceparent: rejects wrong delimiters" {
 
 const log_path = "/tmp/httpz-logger-test.log";
 
-/// Set up logz with logfmt file output for integration tests.
+/// Set up logz directly for integration tests (bypasses init which needs httpz server).
 fn setupLogz() void {
     setupLogzWith(.logfmt);
 }
 
-/// Set up logz with the given encoding and file output.
-fn setupLogzWith(encoding: logz.Config.Encoding) void {
+fn setupLogzWith(encoding: Encoding) void {
     logz.setup(testing.allocator, .{
         .level = .Debug,
         .output = .{ .file = log_path },
@@ -518,7 +539,6 @@ test "middleware: json encoding logs basic request" {
     const output = try readLog();
     defer testing.allocator.free(output);
 
-    // JSON output wraps keys and string values in quotes.
     try testing.expect(std.mem.indexOf(u8, output, "\"method\":\"GET\"") != null);
     try testing.expect(std.mem.indexOf(u8, output, "\"path\":\"/api/data\"") != null);
     try testing.expect(std.mem.indexOf(u8, output, "\"status\":200") != null);
