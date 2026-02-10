@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1] — 2026-02-10
+
+### Fixes
+
+- Log correct HTTP status on handler errors — set 500 when status is still default, preserve explicit error status (e.g. 503)
+- Document recommended middleware ordering: CORS → Logger → Auth
+
 ## [1.0.0] — 2026-02-10
 
 ### Breaking Changes
