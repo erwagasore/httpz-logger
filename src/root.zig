@@ -77,10 +77,16 @@ pub fn deinit(_: *@This()) void {
 }
 
 /// Middleware execution — called by httpz for each request.
+/// Logs every request including ones where the handler returns an error.
 pub fn execute(self: *const @This(), req: *httpz.Request, res: *httpz.Response, executor: anytype) !void {
     const start = std.time.milliTimestamp();
     defer self.log(req, res, std.time.milliTimestamp() - start);
-    return executor.next();
+    executor.next() catch |err| {
+        // Handler errored — if status is still the default 200, mark it as 500
+        // so the log reflects the actual outcome. httpz does the same after us.
+        if (res.status < 400) res.status = 500;
+        return err;
+    };
 }
 
 fn log(self: *const @This(), req: *httpz.Request, res: *httpz.Response, duration_ms: i64) void {
@@ -270,6 +276,12 @@ fn initHt() httpz.testing.Testing {
 
 const NoopExecutor = struct {
     pub fn next(_: *NoopExecutor) !void {}
+};
+
+const FailingExecutor = struct {
+    pub fn next(_: *FailingExecutor) !void {
+        return error.HandlerFailed;
+    }
 };
 
 test "middleware: logs basic GET request" {
@@ -516,6 +528,59 @@ test "middleware: .None level disables all logging" {
     const output = readLog() catch "";
     defer if (output.len > 0) testing.allocator.free(output);
     try testing.expectEqual(@as(usize, 0), output.len);
+}
+
+// -- Error handling ----------------------------------------------------------
+
+test "middleware: handler error sets status 500 and still logs" {
+    cleanLog();
+    setupLogz();
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/boom");
+    // status is default 200 — handler will error without setting it
+
+    const mw = @This(){ .config = .{} };
+    var exec = FailingExecutor{};
+    const result = mw.execute(ht.req, ht.res, &exec);
+    try testing.expectError(error.HandlerFailed, result);
+
+    // Status should have been corrected to 500 before logging.
+    try testing.expectEqual(@as(u16, 500), ht.res.status);
+
+    const output = try readLog();
+    defer testing.allocator.free(output);
+
+    try testing.expect(std.mem.indexOf(u8, output, "status=500") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "path=/boom") != null);
+}
+
+test "middleware: handler error preserves explicit error status" {
+    cleanLog();
+    setupLogz();
+    defer logz.deinit();
+
+    var ht = initHt();
+    defer ht.deinit();
+
+    ht.url("/unavailable");
+    ht.res.status = 503; // handler set this before erroring
+
+    const mw = @This(){ .config = .{} };
+    var exec = FailingExecutor{};
+    const result = mw.execute(ht.req, ht.res, &exec);
+    try testing.expectError(error.HandlerFailed, result);
+
+    // Should preserve the 503 — not overwrite with 500.
+    try testing.expectEqual(@as(u16, 503), ht.res.status);
+
+    const output = try readLog();
+    defer testing.allocator.free(output);
+
+    try testing.expect(std.mem.indexOf(u8, output, "status=503") != null);
 }
 
 // -- JSON encoding -----------------------------------------------------------
