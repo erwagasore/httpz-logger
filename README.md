@@ -107,6 +107,29 @@ const logger = try server.middleware(HttpLogger, .{
 | `.stderr` | Standard error |
 | `.{ .file = "/var/log/app.log" }` | Write to file |
 
+## Middleware Ordering
+
+Place the logger **early** in the chain — after CORS, before auth and other
+middleware. The `defer`-based design captures the final response status regardless
+of where in the chain the response was decided.
+
+```zig
+const cors = try server.middleware(httpz.middleware.Cors, .{ .origin = "*" });
+const logger = try server.middleware(HttpLogger, .{});
+const auth = try server.middleware(AuthMiddleware, .{});
+
+var router = try server.router(.{ .middlewares = &.{ cors, logger, auth } });
+```
+
+| Position | Middleware | Why |
+|----------|-----------|-----|
+| 1st | CORS | Short-circuits preflight noise before the logger |
+| 2nd | **Logger** | Sees everything except preflights |
+| 3rd+ | Auth, rate limiter, etc. | Rejections are still captured by the logger |
+
+If the logger is placed **last**, requests rejected by upstream middleware
+(401, 403, 429) are never logged — the logger's `execute` is never called.
+
 ## Distributed Tracing
 
 Automatically extracts trace context from W3C `traceparent` headers:
