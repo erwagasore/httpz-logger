@@ -103,11 +103,7 @@ fn log(self: *const @This(), req: *httpz.Request, res: *httpz.Response, duration
         .int("duration_ms", duration_ms);
 
     if (self.config.log_client) {
-        var buf: [64]u8 = undefined;
-        var w = std.Io.Writer.fixed(&buf);
-        if (req.address.format(&w)) {
-            _ = logger.stringSafe("client", w.buffered());
-        } else |_| {}
+        _ = logger.fmt("client", "{f}", .{req.address});
     }
 
     if (self.config.log_trace_id or self.config.log_span_id) {
