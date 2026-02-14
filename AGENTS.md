@@ -34,7 +34,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/).
 | `examples/basic_server.zig` | Runnable example server with logging middleware |
 | `build.zig` | Build system — library module, example executable, test step |
 | `build.zig.zon` | Package manifest with httpz and logz dependencies |
-| `MIGRATION_PLAN.md` | v2 rewrite plan — architecture decisions and v1 comparison |
+| `docs/index.md` | Documentation index with links to all project docs |
 | `CHANGELOG.md` | Release history |
 | `LICENSE` | MIT licence |
 
