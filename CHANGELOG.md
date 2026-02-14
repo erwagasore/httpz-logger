@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2] — 2026-02-14
+
+### Other
+
+- Simplify client address logging using logz's `fmt` method instead of manual stack buffer
+- Remove completed migration plan and update repo map
+
 ## [1.0.1] — 2026-02-10
 
 ### Fixes
