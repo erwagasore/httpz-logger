@@ -4,16 +4,16 @@ const HttpLogger = @import("httpz_logger");
 
 const PORT = 8080;
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa;
 
-    var server = try httpz.Server(void).init(allocator, .{ .port = PORT }, {});
+    var server = try httpz.Server(void).init(io, allocator, .{ .address = .localhost(PORT) }, {});
     defer server.deinit();
     defer server.stop();
 
     // One line — logging is ready. No logz setup needed.
-    const logger = try server.middleware(HttpLogger, .{ .level = .Info });
+    const logger = try server.middleware(HttpLogger, .{ .io = io, .level = .Info });
 
     var router = try server.router(.{ .middlewares = &.{logger} });
     router.get("/", index, .{});

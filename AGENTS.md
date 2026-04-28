@@ -54,4 +54,4 @@ Use [Conventional Commits](https://www.conventionalcommits.org/).
 
 - **Entry point**: `src/root.zig` — single-file middleware implementation.
 - **Domain**: HTTP request logging middleware for the Zig [httpz](https://github.com/karlseguin/http.zig) framework, backed by [logz](https://github.com/karlseguin/log.zig).
-- **Stack**: Zig 0.15+, httpz, logz.
+- **Stack**: Zig 0.16+, httpz, logz.
