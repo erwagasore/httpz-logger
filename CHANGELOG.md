@@ -1,11 +1,11 @@
 # Changelog
 
-## Unreleased
+## [2.0.0] — 2026-04-28
 
 ### Breaking Changes
 
-- Require Zig 0.16.x and update the example/httpz integration to the Zig 0.16 `std.process.Init` and `std.Io` APIs
-- `Config.io` is now required when automatic logz setup is enabled so logz can write output and timestamps via Zig 0.16 I/O
+- Require Zig 0.16.x and update httpz-logger to the Zig 0.16 `std.process.Init` and `std.Io` APIs
+- Require `Config.io` when automatic logz setup is enabled so logz can write output and timestamps via Zig 0.16 I/O
 
 ### Other
 
