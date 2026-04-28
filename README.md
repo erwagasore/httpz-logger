@@ -4,6 +4,8 @@ Request logging middleware for [httpz](https://github.com/karlseguin/http.zig) w
 
 Built on [logz](https://github.com/karlseguin/log.zig) for high-performance structured logging.
 
+Requires Zig 0.16.x.
+
 ## Quickstart
 
 ```bash
@@ -39,16 +41,16 @@ const std = @import("std");
 const httpz = @import("httpz");
 const HttpLogger = @import("httpz_logger");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa;
 
-    var server = try httpz.Server(void).init(allocator, .{ .port = 8080 }, {});
+    var server = try httpz.Server(void).init(io, allocator, .{ .address = .localhost(8080) }, {});
     defer server.deinit();
     defer server.stop();
 
     // One line — logging is ready.
-    const logger = try server.middleware(HttpLogger, .{});
+    const logger = try server.middleware(HttpLogger, .{ .io = io });
 
     var router = try server.router(.{ .middlewares = &.{logger} });
     router.get("/", handleIndex, .{});
@@ -57,7 +59,7 @@ pub fn main() !void {
 }
 ```
 
-No logz import, no logz setup — the middleware handles it.
+No logz import, no logz setup — the middleware handles it. Zig 0.16's `std.Io` is still required so logz can write output, open files, and get timestamps.
 
 ## Output
 
@@ -75,6 +77,7 @@ No logz import, no logz setup — the middleware handles it.
 
 ```zig
 const logger = try server.middleware(HttpLogger, .{
+    .io = io,                 // Required for automatic logz setup on Zig 0.16+
     .level = .Warn,           // Only log 4xx and 5xx
     .output = .stderr,        // Write to stderr (default: .stdout)
     .encoding = .json,        // JSON output (default: .logfmt)
@@ -86,6 +89,7 @@ const logger = try server.middleware(HttpLogger, .{
     .log_request_id = true,   // Include X-Request-ID header
     .log_user_id = true,      // Include X-User-ID header
     .pool_size = 64,          // Pre-allocated log buffers (default: 32)
+    .auto_setup = true,       // Set false if your app configures logz itself
 });
 ```
 
@@ -115,7 +119,7 @@ of where in the chain the response was decided.
 
 ```zig
 const cors = try server.middleware(httpz.middleware.Cors, .{ .origin = "*" });
-const logger = try server.middleware(HttpLogger, .{});
+const logger = try server.middleware(HttpLogger, .{ .io = io });
 const auth = try server.middleware(AuthMiddleware, .{});
 
 var router = try server.router(.{ .middlewares = &.{ cors, logger, auth } });

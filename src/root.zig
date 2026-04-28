@@ -9,6 +9,7 @@
 //! const HttpLogger = @import("httpz_logger");
 //!
 //! const logger = try server.middleware(HttpLogger, .{
+//!     .io = init.io,
 //!     .level = .Info,
 //!     .output = .stdout,
 //! });
@@ -56,31 +57,44 @@ pub const Config = struct {
     log_request_id: bool = true,
     /// Include X-User-ID / X-User header.
     log_user_id: bool = true,
+
+    /// I/O interface used by logz for output, files, clocks, and locks.
+    /// Required when `auto_setup` is enabled (the default) on Zig 0.16+.
+    io: ?std.Io = null,
+
+    /// Automatically set up the global logz backend during middleware init.
+    /// Set to false if the application configures logz itself.
+    auto_setup: bool = true,
 };
 
 config: Config,
+owns_logz: bool = false,
 
-/// Initialise the middleware — sets up the logging backend automatically.
+/// Initialise the middleware — sets up the logging backend automatically by default.
 pub fn init(config: Config, mc: httpz.MiddlewareConfig) !@This() {
-    try logz.setup(mc.allocator, .{
-        .level = config.level,
-        .output = config.output,
-        .encoding = config.encoding,
-        .pool_size = config.pool_size,
-    });
-    return .{ .config = config };
+    if (config.auto_setup) {
+        const io = config.io orelse return error.MissingIo;
+        try logz.setup(io, mc.allocator, .{
+            .level = config.level,
+            .output = config.output,
+            .encoding = config.encoding,
+            .pool_size = config.pool_size,
+        });
+    }
+    return .{ .config = config, .owns_logz = config.auto_setup };
 }
 
-/// Tear down the logging backend.
-pub fn deinit(_: *@This()) void {
-    logz.deinit();
+/// Tear down the logging backend when this middleware set it up.
+pub fn deinit(self: *@This()) void {
+    if (self.owns_logz) logz.deinit();
 }
 
 /// Middleware execution — called by httpz for each request.
 /// Logs every request including ones where the handler returns an error.
 pub fn execute(self: *const @This(), req: *httpz.Request, res: *httpz.Response, executor: anytype) !void {
-    const start = std.time.milliTimestamp();
-    defer self.log(req, res, std.time.milliTimestamp() - start);
+    const io = res.conn.io;
+    const start = std.Io.Timestamp.now(io, .awake);
+    defer self.log(req, res, start.untilNow(io, .awake).toMilliseconds());
     executor.next() catch |err| {
         // Handler errored — if status is still the default 200, mark it as 500
         // so the log reflects the actual outcome. httpz does the same after us.
@@ -242,13 +256,31 @@ test "parseTraceparent: rejects wrong delimiters" {
 
 const log_path = "/tmp/httpz-logger-test.log";
 
+// -- init -------------------------------------------------------------------
+
+test "init: auto setup requires io" {
+    try testing.expectError(error.MissingIo, @This().init(.{}, .{
+        .arena = testing.allocator,
+        .allocator = testing.allocator,
+    }));
+}
+
+test "init: manual logz setup does not require io" {
+    const mw = try @This().init(.{ .auto_setup = false }, .{
+        .arena = testing.allocator,
+        .allocator = testing.allocator,
+    });
+
+    try testing.expect(!mw.owns_logz);
+}
+
 /// Set up logz directly for integration tests (bypasses init which needs httpz server).
 fn setupLogz() void {
     setupLogzWith(.logfmt);
 }
 
 fn setupLogzWith(encoding: Encoding) void {
-    logz.setup(testing.allocator, .{
+    logz.setup(testing.io, testing.allocator, .{
         .level = .Debug,
         .output = .{ .file = log_path },
         .encoding = encoding,
@@ -258,12 +290,12 @@ fn setupLogzWith(encoding: Encoding) void {
 
 /// Read the log file contents. Caller owns the returned slice.
 fn readLog() ![]u8 {
-    return std.fs.cwd().readFileAlloc(testing.allocator, log_path, 8192);
+    return std.Io.Dir.cwd().readFileAlloc(testing.io, log_path, testing.allocator, .limited(8192));
 }
 
 /// Delete the log file (ignore if missing).
 fn cleanLog() void {
-    std.fs.cwd().deleteFile(log_path) catch {};
+    std.Io.Dir.cwd().deleteFile(testing.io, log_path) catch {};
 }
 
 fn initHt() httpz.testing.Testing {
