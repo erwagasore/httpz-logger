@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Other
+
+- Switch logz dependency back to upstream `karlseguin/log.zig` now that the Zig 0.16 timestamp fix has merged
+
 ## [2.0.0] — 2026-04-28
 
 ### Breaking Changes
